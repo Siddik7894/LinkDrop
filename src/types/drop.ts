@@ -8,7 +8,7 @@ export interface DropRecord {
   fileSize: number;
   mimeType: string;
   storageKey: string;
-  storageProvider: 'local' | 's3';
+  storageProvider: 'local' | 's3' | 'blob';
   passwordHash?: string | null;
   hasPassword: boolean;
   maxDownloads?: number | null;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { deleteFile } from "@/lib/storage";
+import { deleteFile, StorageProvider } from "@/lib/storage";
 import { toPublicMetadata } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +68,7 @@ export async function DELETE(
     }
 
     // Delete stored file
-    await deleteFile(drop.storageKey, drop.storageProvider as "local" | "s3");
+    await deleteFile(drop.storageKey, drop.storageProvider as StorageProvider);
 
     // Mark revoked in DB
     const updated = await prisma.drop.update({

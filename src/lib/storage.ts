@@ -5,8 +5,16 @@ import {
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { put, del } from "@vercel/blob";
 
-// Helper to determine if S3/R2 is configured
+// ── Provider Detection ────────────────────────────────────────────────
+
+export type StorageProvider = "local" | "s3" | "blob";
+
+export function isVercelBlobConfigured(): boolean {
+  return !!process.env.BLOB_READ_WRITE_TOKEN;
+}
+
 export function isS3Configured(): boolean {
   return !!(
     process.env.AWS_S3_BUCKET &&
@@ -14,6 +22,20 @@ export function isS3Configured(): boolean {
     process.env.AWS_SECRET_ACCESS_KEY
   );
 }
+
+/**
+ * Returns the active storage provider in priority order:
+ * 1. Vercel Blob (if BLOB_READ_WRITE_TOKEN is set)
+ * 2. S3/R2 (if AWS credentials are set)
+ * 3. Local filesystem (fallback for dev)
+ */
+export function getActiveProvider(): StorageProvider {
+  if (isVercelBlobConfigured()) return "blob";
+  if (isS3Configured()) return "s3";
+  return "local";
+}
+
+// ── S3 Client (lazy singleton) ────────────────────────────────────────
 
 let s3Client: S3Client | null = null;
 function getS3Client(): S3Client {
@@ -45,17 +67,32 @@ async function getLocalModules() {
   return { fs, path, uploadDir };
 }
 
+// ── Save File ─────────────────────────────────────────────────────────
+
 /**
  * Saves a file buffer to storage.
- * Uses S3/R2 in production, falls back to local filesystem in development.
+ * Uses Vercel Blob in production, S3/R2 if configured, or local filesystem.
  */
 export async function saveFile(
   key: string,
   buffer: Buffer,
   mimeType: string
-): Promise<{ storageKey: string; storageProvider: "local" | "s3" }> {
-  // Always prefer S3/R2 when configured (production)
-  if (isS3Configured()) {
+): Promise<{ storageKey: string; storageProvider: StorageProvider }> {
+  const provider = getActiveProvider();
+
+  // ── Vercel Blob ──
+  if (provider === "blob") {
+    const blob = await put(key, buffer, {
+      access: "public",
+      contentType: mimeType,
+      addRandomSuffix: false,
+    });
+    // Store the full blob URL as the storageKey so we can retrieve/delete it
+    return { storageKey: blob.url, storageProvider: "blob" };
+  }
+
+  // ── S3 / R2 ──
+  if (provider === "s3") {
     const client = getS3Client();
     const bucket = process.env.AWS_S3_BUCKET!;
     await client.send(
@@ -69,7 +106,7 @@ export async function saveFile(
     return { storageKey: key, storageProvider: "s3" };
   }
 
-  // Local storage fallback (development only)
+  // ── Local storage fallback (development only) ──
   const { fs, uploadDir } = await getLocalModules();
   const { join } = await import("path");
   if (!fs.existsSync(uploadDir)) {
@@ -80,13 +117,30 @@ export async function saveFile(
   return { storageKey: key, storageProvider: "local" };
 }
 
+// ── Get File ──────────────────────────────────────────────────────────
+
 /**
  * Retrieves a file from storage as Buffer.
  */
 export async function getFile(
   key: string,
-  provider: "local" | "s3" = "local"
+  provider: StorageProvider = "local"
 ): Promise<Buffer | null> {
+  // ── Vercel Blob ──
+  if (provider === "blob") {
+    try {
+      // key is the full blob URL for blob provider
+      const response = await fetch(key);
+      if (!response.ok) return null;
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch (err) {
+      console.error("Failed to retrieve file from Vercel Blob:", err);
+      return null;
+    }
+  }
+
+  // ── S3 / R2 ──
   if (provider === "s3" && isS3Configured()) {
     try {
       const client = getS3Client();
@@ -107,7 +161,7 @@ export async function getFile(
     }
   }
 
-  // Local storage fallback
+  // ── Local storage ──
   try {
     const { fs, uploadDir } = await getLocalModules();
     const { join } = await import("path");
@@ -122,13 +176,27 @@ export async function getFile(
   }
 }
 
+// ── Delete File ───────────────────────────────────────────────────────
+
 /**
  * Deletes a file from storage.
  */
 export async function deleteFile(
   key: string,
-  provider: "local" | "s3" = "local"
+  provider: StorageProvider = "local"
 ): Promise<void> {
+  // ── Vercel Blob ──
+  if (provider === "blob") {
+    try {
+      // key is the full blob URL
+      await del(key);
+      return;
+    } catch (err) {
+      console.error("Failed to delete Vercel Blob file:", err);
+    }
+  }
+
+  // ── S3 / R2 ──
   if (provider === "s3" && isS3Configured()) {
     try {
       const client = getS3Client();
@@ -145,7 +213,7 @@ export async function deleteFile(
     }
   }
 
-  // Local storage fallback
+  // ── Local storage ──
   try {
     const { fs, uploadDir } = await getLocalModules();
     const { join } = await import("path");
@@ -157,6 +225,8 @@ export async function deleteFile(
     console.warn("Failed to delete local file:", err);
   }
 }
+
+// ── Presigned URL (S3 only) ───────────────────────────────────────────
 
 /**
  * Generates a presigned direct download URL for S3/R2 files.

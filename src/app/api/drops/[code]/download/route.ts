@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getFile, deleteFile } from "@/lib/storage";
+import { getFile, deleteFile, StorageProvider } from "@/lib/storage";
 import { verifyPassword } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -77,7 +77,7 @@ export async function GET(
     // Get file from storage
     const buffer = await getFile(
       drop.storageKey,
-      drop.storageProvider as "local" | "s3"
+      drop.storageProvider as StorageProvider
     );
 
     if (!buffer) {
@@ -89,7 +89,7 @@ export async function GET(
 
     // If this was the last allowed download, delete file immediately (burn after reading)
     if (drop.maxDownloads !== null && updatedCount >= drop.maxDownloads) {
-      deleteFile(drop.storageKey, drop.storageProvider as "local" | "s3").catch(
+      deleteFile(drop.storageKey, drop.storageProvider as StorageProvider).catch(
         (err) => console.error("Failed to delete burned file:", err)
       );
     }

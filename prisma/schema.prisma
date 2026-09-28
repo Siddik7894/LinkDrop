@@ -2,7 +2,7 @@
 // Prisma Schema — PostgreSQL (Neon) for production
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
