@@ -1,0 +1,33 @@
+// LinkDrop Temporary File & Link Sharing Platform
+// Prisma Schema — PostgreSQL (Neon) for production
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Drop {
+  id              String    @id @default(cuid())
+  code            String    @unique
+  fileName        String
+  fileSize        Int
+  mimeType        String
+  storageKey      String
+  storageProvider String    @default("local") // "local" | "s3"
+  passwordHash    String?
+  hasPassword     Boolean   @default(false)
+  maxDownloads    Int?      // null = unlimited
+  downloadCount   Int       @default(0)
+  expiresAt       DateTime
+  isRevoked       Boolean   @default(false)
+  senderToken     String    @default(cuid())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([code])
+  @@index([expiresAt])
+}
