@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAppOrigin } from "@/lib/app-url";
-import { saveFile } from "@/lib/storage";
+import { deleteFile, isVercelBlobConfigured, saveFile, StorageProvider } from "@/lib/storage";
 import {
   calculateExpiration,
   generateDropCode,
@@ -13,11 +13,24 @@ import { ExpirationOption, CreateDropResult } from "@/types/drop";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  try {
-    const formData = await request.formData();
-    const file = formData.get("file") as File | null;
+  let storedFile: { key: string; provider: StorageProvider } | null = null;
 
-    if (!file) {
+  try {
+    const isDirectUpload =
+      request.headers.get("content-type")?.includes("application/json") ?? false;
+    const formData = isDirectUpload ? null : await request.formData();
+    const payload = isDirectUpload
+      ? ((await request.json()) as Record<string, unknown>)
+      : null;
+    const getField = (name: string): string | null => {
+      const value = isDirectUpload ? payload?.[name] : formData?.get(name);
+      return typeof value === "string" || typeof value === "number"
+        ? String(value)
+        : null;
+    };
+    const file = isDirectUpload ? null : (formData?.get("file") as File | null);
+
+    if (!isDirectUpload && !file) {
       return NextResponse.json(
         { error: "No file provided" },
         { status: 400 }
@@ -25,9 +38,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Read form options
-    const expirationOption = (formData.get("expiration") as ExpirationOption) || "24h";
-    const maxDownloadsRaw = formData.get("maxDownloads");
-    const password = (formData.get("password") as string | null)?.trim() || null;
+    const expirationOption = (getField("expiration") as ExpirationOption) || "24h";
+    const maxDownloadsRaw = getField("maxDownloads");
+    const password = getField("password")?.trim() || null;
 
     let maxDownloads: number | null = null;
     if (maxDownloadsRaw && maxDownloadsRaw !== "unlimited") {
@@ -37,13 +50,61 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Limit file size (e.g. 100MB)
+    const originalName = getField("fileName") || file?.name || "download";
+    const fileSize = isDirectUpload
+      ? Number(payload?.fileSize)
+      : file?.size ?? 0;
+    const mimeType =
+      getField("mimeType") || file?.type || "application/octet-stream";
     const MAX_FILE_SIZE = 100 * 1024 * 1024;
-    if (file.size > MAX_FILE_SIZE) {
+    if (
+      !Number.isSafeInteger(fileSize) ||
+      fileSize < 0 ||
+      fileSize > MAX_FILE_SIZE
+    ) {
       return NextResponse.json(
         { error: "File exceeds maximum upload size (100MB)" },
         { status: 400 }
       );
+    }
+
+    let storageKey: string;
+    let storageProvider: StorageProvider;
+
+    if (isDirectUpload) {
+      const blobUrl = getField("blobUrl");
+      let blobHost = "";
+      try {
+        blobHost = blobUrl ? new URL(blobUrl).hostname : "";
+      } catch {
+        // The URL validation below returns a client error.
+      }
+      if (
+        !blobUrl ||
+        !blobHost.endsWith(".public.blob.vercel-storage.com") ||
+        !isVercelBlobConfigured()
+      ) {
+        return NextResponse.json(
+          { error: "The uploaded file is not a valid Vercel Blob." },
+          { status: 400 }
+        );
+      }
+      storageKey = blobUrl;
+      storageProvider = "blob";
+      storedFile = { key: storageKey, provider: storageProvider };
+    } else {
+      if (!file) {
+        return NextResponse.json({ error: "No file provided" }, { status: 400 });
+      }
+      const ext = originalName.includes(".")
+        ? `.${originalName.split(".").pop()}`
+        : "";
+      const key = `${Date.now()}-${generateDropCode()}${ext}`;
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const saved = await saveFile(key, buffer, mimeType);
+      storageKey = saved.storageKey;
+      storageProvider = saved.storageProvider;
+      storedFile = { key: storageKey, provider: storageProvider };
     }
 
     // Generate unique code
@@ -55,22 +116,6 @@ export async function POST(request: NextRequest) {
       existing = await prisma.drop.findUnique({ where: { code } });
       attempts++;
     }
-
-    // Storage key with extension preserved
-    const originalName = file.name || "download";
-    const ext = originalName.includes(".") ? `.${originalName.split(".").pop()}` : "";
-    const storageKey = `${Date.now()}-${code}${ext}`;
-
-    // Read file bytes
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // Save file
-    const { storageProvider } = await saveFile(
-      storageKey,
-      buffer,
-      file.type || "application/octet-stream"
-    );
 
     // Hash password if given
     let passwordHash: string | null = null;
@@ -88,8 +133,8 @@ export async function POST(request: NextRequest) {
       data: {
         code,
         fileName: originalName,
-        fileSize: file.size,
-        mimeType: file.type || "application/octet-stream",
+        fileSize,
+        mimeType,
         storageKey,
         storageProvider,
         passwordHash,
@@ -100,6 +145,7 @@ export async function POST(request: NextRequest) {
         senderToken,
       },
     });
+    storedFile = null;
 
     // Share URL
     const shareUrl = `${getAppOrigin(request.nextUrl.origin)}/d/${drop.code}`;
@@ -117,6 +163,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result, { status: 201 });
   } catch (err: unknown) {
+    if (storedFile) {
+      await deleteFile(storedFile.key, storedFile.provider);
+    }
     console.error("Error creating drop:", err);
     return NextResponse.json(
       { error: "Failed to create drop. Please try again." },

@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "prisma generate --config prisma.local.config.ts && prisma db push --config prisma.local.config.ts && next dev",
-    "build": "prisma generate --schema prisma/schema.prisma && next build",
+    "build": "prisma db push --schema prisma/schema.prisma && prisma generate --schema prisma/schema.prisma && next build",
     "start": "next start",
     "lint": "eslint",
     "postinstall": "prisma generate"

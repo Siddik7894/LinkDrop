@@ -32,6 +32,11 @@ export function isS3Configured(): boolean {
 export function getActiveProvider(): StorageProvider {
   if (isVercelBlobConfigured()) return "blob";
   if (isS3Configured()) return "s3";
+  if (process.env.VERCEL_ENV || process.env.VERCEL_URL) {
+    throw new Error(
+      "Persistent storage is not configured for Vercel. Add a Vercel Blob store or S3 credentials."
+    );
+  }
   return "local";
 }
 

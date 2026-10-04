@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, DragEvent, ChangeEvent } from "react";
+import { upload } from "@vercel/blob/client";
 import {
   UploadCloud,
   File as FileIcon,
@@ -108,27 +109,68 @@ export function UploadZone({ onSuccess }: UploadZoneProps) {
     setIsUploading(true);
     setErrorMessage(null);
     setUploadProgress(15);
+    let progressTimer: ReturnType<typeof setInterval> | undefined;
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("expiration", expiration);
-      formData.append("maxDownloads", downloadLimit.toString());
-      if (enablePassword && password.trim()) {
-        formData.append("password", password.trim());
+      const configResponse = await fetch("/api/drops/upload-token", {
+        cache: "no-store",
+      });
+      const uploadConfig = await configResponse.json();
+      if (!configResponse.ok) {
+        throw new Error(uploadConfig.error || "File storage is not configured.");
       }
 
-      // Simulate progress progression for smooth UX
-      const progressTimer = setInterval(() => {
-        setUploadProgress((prev) => (prev < 85 ? prev + 15 : prev));
-      }, 200);
+      let res: Response;
+      if (uploadConfig.directUpload) {
+        const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_") || "upload";
+        const blob = await upload(
+          `drops/${Date.now()}-${safeFileName}`,
+          file,
+          {
+            access: "public",
+            contentType: file.type || "application/octet-stream",
+            handleUploadUrl: "/api/drops/upload-token",
+            multipart: file.size > 4 * 1024 * 1024,
+            onUploadProgress: ({ percentage }) => {
+              setUploadProgress(Math.min(85, Math.round(percentage * 0.85)));
+            },
+          }
+        );
 
-      const res = await fetch("/api/drops", {
-        method: "POST",
-        body: formData,
-      });
+        setUploadProgress(90);
+        res = await fetch("/api/drops", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            blobUrl: blob.url,
+            fileName: file.name,
+            fileSize: file.size,
+            mimeType: file.type || "application/octet-stream",
+            expiration,
+            maxDownloads: downloadLimit.toString(),
+            password: enablePassword ? password.trim() : null,
+          }),
+        });
+      } else {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("expiration", expiration);
+        formData.append("maxDownloads", downloadLimit.toString());
+        if (enablePassword && password.trim()) {
+          formData.append("password", password.trim());
+        }
 
-      clearInterval(progressTimer);
+        progressTimer = setInterval(() => {
+          setUploadProgress((prev) => (prev < 85 ? prev + 15 : prev));
+        }, 200);
+
+        res = await fetch("/api/drops", {
+          method: "POST",
+          body: formData,
+        });
+      }
+
+      if (progressTimer) clearInterval(progressTimer);
       setUploadProgress(100);
 
       const data = await res.json();
@@ -144,6 +186,7 @@ export function UploadZone({ onSuccess }: UploadZoneProps) {
         err instanceof Error ? err.message : "Something went wrong. Please try again."
       );
     } finally {
+      if (progressTimer) clearInterval(progressTimer);
       setIsUploading(false);
     }
   };
