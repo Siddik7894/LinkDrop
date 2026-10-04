@@ -1,10 +1,9 @@
-// LinkDrop Temporary File & Link Sharing Platform
-// Production Prisma schema — PostgreSQL (Neon).
-// Keep the model definitions in schema.local.prisma in sync.
+// Local development Prisma schema — SQLite.
+// Keep the model definitions in schema.prisma in sync.
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
 generator client {
