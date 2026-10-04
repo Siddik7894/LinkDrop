@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { getAppOrigin } from "@/lib/app-url";
 import { saveFile } from "@/lib/storage";
 import {
   calculateExpiration,
@@ -101,12 +102,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Share URL
-    const appUrl =
-      process.env.NEXT_PUBLIC_APP_URL ||
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
-      request.nextUrl.origin ||
-      "http://localhost:3000";
-    const shareUrl = `${appUrl}/d/${drop.code}`;
+    const shareUrl = `${getAppOrigin(request.nextUrl.origin)}/d/${drop.code}`;
 
     const result: CreateDropResult = {
       code: drop.code,
