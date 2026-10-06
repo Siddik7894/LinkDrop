@@ -7,10 +7,10 @@
   },
   "scripts": {
     "dev": "prisma generate --config prisma.local.config.ts && prisma db push --config prisma.local.config.ts && next dev",
-    "build": "prisma db push --schema prisma/schema.prisma && prisma generate --schema prisma/schema.prisma && next build",
+    "build": "prisma generate --config prisma.generate.config.ts && prisma db push --config prisma.config.ts && next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate --config prisma.generate.config.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1140.0",

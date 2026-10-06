@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
 
     const originalName = getField("fileName") || file?.name || "download";
     const fileSize = isDirectUpload
-      ? Number(payload?.fileSize)
+      ? parseInt(String(payload?.fileSize), 10) || 0
       : file?.size ?? 0;
     const mimeType =
       getField("mimeType") || file?.type || "application/octet-stream";
@@ -167,8 +167,10 @@ export async function POST(request: NextRequest) {
       await deleteFile(storedFile.key, storedFile.provider);
     }
     console.error("Error creating drop:", err);
+    const message =
+      err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
-      { error: "Failed to create drop. Please try again." },
+      { error: `Failed to create drop: ${message}` },
       { status: 500 }
     );
   }
