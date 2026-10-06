@@ -11,8 +11,11 @@ export default defineConfig({
   },
   engine: "classic",
   datasource: {
-    // Use Neon's direct connection for build-time schema sync when available.
-    // Keep DATABASE_URL as the runtime/compatibility fallback.
-    url: process.env.DATABASE_URL_UNPOOLED || env("DATABASE_URL"),
+    // Support the Vercel Prisma Postgres integration's default STORAGE_URL
+    // prefix, and prefer direct URLs for build-time schema sync when present.
+    url:
+      process.env.STORAGE_URL ||
+      process.env.DATABASE_URL_UNPOOLED ||
+      env("DATABASE_URL"),
   },
 });
